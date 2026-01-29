@@ -236,16 +236,6 @@ vscode-tools/
 | **代码规范** | Biome (lint + format) |
 | **AI 集成** | OpenAI API (兼容接口) |
 
-## 🤝 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'Add amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 创建 Pull Request
-
 
 ## 🙏 致谢
 
@@ -258,4 +248,3 @@ vscode-tools/
 <p align="center">
   Made with ❤️ by <a href="https://github.com/Nymph-Beta">Nymph-Beta</a>
 </p>
-
