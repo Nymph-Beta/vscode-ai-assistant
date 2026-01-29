@@ -5,7 +5,6 @@
   <img src="https://img.shields.io/badge/Node.js-18+-green?logo=node.js" alt="Node.js Version">
   <img src="https://img.shields.io/badge/TypeScript-5.8+-blue?logo=typescript" alt="TypeScript">
   <img src="https://img.shields.io/badge/Vue-3.5+-green?logo=vue.js" alt="Vue 3">
-  <img src="https://img.shields.io/badge/License-MIT-yellow" alt="License">
 </p>
 
 一个功能强大的 VS Code AI 编程助手扩展，支持多种工作模式、智能工具调用和流式对话。灵感来源于 [Roo-Code](https://github.com/RooCodeInc/Roo-Code)。
@@ -247,9 +246,6 @@ vscode-tools/
 4. 推送到分支 (`git push origin feature/amazing-feature`)
 5. 创建 Pull Request
 
-## 📄 许可证
-
-本项目基于 MIT 许可证开源 - 查看 [LICENSE](LICENSE) 文件了解详情。
 
 ## 🙏 致谢
 
