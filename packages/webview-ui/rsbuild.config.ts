@@ -19,11 +19,9 @@ export default defineConfig({
     distPath: {
       root: '../extension/webview-ui',
     },
+    // 生成 manifest.json 用于动态文件加载
     manifest: true,
-    // 新增：去掉文件名哈希
-    filename: {
-      js: '[name].js',
-      css: '[name].css',
-    },
+    // 保留文件名哈希以支持浏览器缓存优化
+    // manifest.json 会自动记录实际文件名
   }
 });

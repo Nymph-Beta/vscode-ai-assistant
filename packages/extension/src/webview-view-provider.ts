@@ -7,6 +7,7 @@ import {
   workspace,
   Uri
 } from "vscode";
+import * as fs from "node:fs";
 import { aiService, type ChatMessage, type ToolCall, type ApiStreamChunk } from "./ai_service";
 import { createDefaultToolRegistry, type ToolRegistry, type ToolResult } from "./tools";
 import { modeManager, type Mode } from "./modes";
@@ -434,47 +435,75 @@ export class VSCodeToolsViewProvider implements WebviewViewProvider {
     // 获取 webview-ui 构建产物的 URI
     const distUri = Uri.joinPath(this._extensionUri, "webview-ui");
 
+    // 读取 manifest.json 获取实际的文件名
+    const manifestPath = Uri.joinPath(distUri, "manifest.json");
+    let jsFiles: string[] = [];
+    let cssFiles: string[] = [];
+    let fontFile = "";
+
+    try {
+      const manifestContent = JSON.parse(fs.readFileSync(manifestPath.fsPath, "utf-8"));
+      const initial = manifestContent?.entries?.index?.initial;
+
+      if (initial) {
+        jsFiles = initial.js || [];
+        cssFiles = initial.css || [];
+      }
+
+      // 查找字体文件
+      const allFiles = manifestContent?.allFiles || [];
+      fontFile = allFiles.find((f: string) => f.includes("codicon") && f.endsWith(".ttf")) || "";
+
+      console.log("[Manifest] JS files:", jsFiles);
+      console.log("[Manifest] CSS files:", cssFiles);
+      console.log("[Manifest] Font file:", fontFile);
+    } catch (error) {
+      console.error("Failed to read manifest.json:", error);
+      // 回退到默认文件名
+      jsFiles = ["/static/js/lib-vue.js", "/static/js/159.js", "/static/js/index.js"];
+      cssFiles = ["/static/css/159.css", "/static/css/index.css"];
+      fontFile = "/static/font/codicon.81ea7998.ttf";
+    }
+
     // 转换为 webview 可用的 URI
-    const scriptLibVue = webview.asWebviewUri(
-      Uri.joinPath(distUri, "static", "js", "lib-vue.js")
+    const scriptUris = jsFiles.map(file =>
+      webview.asWebviewUri(Uri.joinPath(distUri, file.replace(/^\//, "")))
     );
-    const scriptVendors = webview.asWebviewUri(
-      Uri.joinPath(distUri, "static", "js", "304.js")  // vendors chunk
+    const styleUris = cssFiles.map(file =>
+      webview.asWebviewUri(Uri.joinPath(distUri, file.replace(/^\//, "")))
     );
-    const scriptIndex = webview.asWebviewUri(
-      Uri.joinPath(distUri, "static", "js", "index.js")
-    );
-    const styleVendors = webview.asWebviewUri(
-      Uri.joinPath(distUri, "static", "css", "304.css")  // vendors chunk
-    );
-    const styleIndex = webview.asWebviewUri(
-      Uri.joinPath(distUri, "static", "css", "index.css")
-    );
-    const fontCodicon = webview.asWebviewUri(
-      Uri.joinPath(distUri, "static", "font", "codicon.81ea7998.ttf")
+    const fontUri = webview.asWebviewUri(
+      Uri.joinPath(distUri, fontFile.replace(/^\//, ""))
     );
 
     // 打印调试信息到扩展日志
     console.log("=== Webview Resource URIs ===");
-    console.log("scriptLibVue:", scriptLibVue.toString());
-    console.log("scriptVendors:", scriptVendors.toString());
-    console.log("scriptIndex:", scriptIndex.toString());
-    console.log("styleVendors:", styleVendors.toString());
-    console.log("styleIndex:", styleIndex.toString());
+    scriptUris.forEach((uri, i) => console.log(`script[${i}]:`, uri.toString()));
+    styleUris.forEach((uri, i) => console.log(`style[${i}]:`, uri.toString()));
+    console.log("font:", fontUri.toString());
+
+    // 生成脚本标签
+    const scriptTags = scriptUris
+      .map(uri => `<script src="${uri}" onerror="console.error('Failed to load script: ${uri}')"></script>`)
+      .join("\n      ");
+
+    // 生成样式标签
+    const styleTags = styleUris
+      .map(uri => `<link href="${uri}" rel="stylesheet">`)
+      .join("\n      ");
 
     return `<!DOCTYPE html>
   <html lang="zh-CN">
   <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; img-src ${webview.cspSource};">
-      <link href="${styleVendors}" rel="stylesheet">
-      <link href="${styleIndex}" rel="stylesheet">
+      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; img-src ${webview.cspSource} https:; connect-src *;">
+      ${styleTags}
       <style>
           @font-face {
               font-family: 'codicon';
               font-display: block;
-              src: url('${fontCodicon}') format('truetype');
+              src: url('${fontUri}') format('truetype');
           }
       </style>
       <title>VSCode Tools</title>
@@ -485,9 +514,7 @@ export class VSCodeToolsViewProvider implements WebviewViewProvider {
           console.log("=== Webview Script Loading ===");
           console.log("开始加载脚本...");
       </script>
-      <script src="${scriptLibVue}" onerror="console.error('Failed to load lib-vue.js')"></script>
-      <script src="${scriptVendors}" onerror="console.error('Failed to load vendors chunk')"></script>
-      <script src="${scriptIndex}" onerror="console.error('Failed to load index.js')"></script>
+      ${scriptTags}
       <script>
           console.log("所有脚本标签已添加");
       </script>

@@ -1,7 +1,39 @@
+# Build outputs
 out/
 dist/
-node_modules/
-.vscode-test/
 *.vsix
 
+# Dependencies
+node_modules/
 package-lock.json
+pnpm-debug.log*
+*.log
+
+# VSCode extension testing
+.vscode-test/
+
+# Generated webview assets (copied from webview-ui build)
+packages/extension/webview-ui/
+
+# Documentation (plans and internal docs)
+doc/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Tool generated history
+.specstory/
