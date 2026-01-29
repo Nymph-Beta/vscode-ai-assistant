@@ -1,0 +1,123 @@
+{
+  "name": "vscode-tools",
+  "displayName": "vscode-tools",
+  "description": "A VS Code extension with useful tools",
+  "version": "0.0.1",
+  "publisher": "dwr2001",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dwr2001/vscode-tools.git"
+  },
+  "engines": {
+    "node": ">=18",
+    "vscode": ">=1.82.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vscode-tools.helloWorld",
+        "title": "VSCode Tools: Hello World"
+      },
+      {
+        "command": "vscode-tools.mode.code",
+        "title": "VSCode Tools: 切换到代码模式"
+      },
+      {
+        "command": "vscode-tools.mode.architect",
+        "title": "VSCode Tools: 切换到架构师模式"
+      },
+      {
+        "command": "vscode-tools.mode.ask",
+        "title": "VSCode Tools: 切换到提问模式"
+      },
+      {
+        "command": "vscode-tools.mode.debug",
+        "title": "VSCode Tools: 切换到调试模式"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "vscode-tools.view",
+          "name": "VSCode Tools View",
+          "icon": "$(tools)",
+          "type": "webview"
+        }
+      ]
+    },
+    "configuration": [
+      {
+        "title": "AI 服务",
+        "properties": {
+          "vscode-tools.ai.provider": {
+            "type": "string",
+            "default": "openai",
+            "enum": ["openai", "local", "custom"],
+            "description": "AI 服务提供商"
+          },
+          "vscode-tools.ai.apiKey": {
+            "type": "string",
+            "default": "",
+            "description": "API Key（对于 OpenAI 兼容服务）"
+          },
+          "vscode-tools.ai.baseURL": {
+            "type": "string",
+            "default": "https://api.openai.com/v1",
+            "description": "API 基础 URL"
+          },
+          "vscode-tools.ai.model": {
+            "type": "string",
+            "default": "gpt-4o-mini",
+            "description": "模型名称"
+          },
+          "vscode-tools.ai.thinkTag": {
+            "type": "boolean",
+            "default": false,
+            "description": "是否启用思考标签解析（用于 DeepSeek 等支持思考的模型）"
+          }
+        }
+      },
+      {
+        "title": "模式设置",
+        "properties": {
+          "vscode-tools.modes.defaultMode": {
+            "type": "string",
+            "default": "code",
+            "enum": ["code", "architect", "ask", "debug"],
+            "enumDescriptions": [
+              "代码模式 - 日常编码、编辑和文件操作",
+              "架构师模式 - 规划系统、规范和迁移（只读）",
+              "提问模式 - 快速回答、解释和文档（只读）",
+              "调试模式 - 跟踪问题、添加日志"
+            ],
+            "description": "默认工作模式"
+          },
+          "vscode-tools.modes.disabledModes": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "description": "禁用的模式列表"
+          }
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "build": "rsbuild build",
+    "watch": "rsbuild build --watch",
+    "check": "biome check --write",
+    "format": "biome format --write",
+    "package": "npm run build && vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@rsbuild/core": "^1.7.2",
+    "@vscode/vsce": "^3.6.0"
+  }
+}
