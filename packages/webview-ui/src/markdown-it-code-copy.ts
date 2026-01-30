@@ -3,7 +3,7 @@ import type { Options } from 'markdown-it';
 import type { Renderer, Token } from 'markdown-it/index.js';
 
 // Render rule type matching markdown-it signature
-type RenderRule = (tokens: Token[], idx: number, options: Options, env: any, self: Renderer) => string;
+type RenderRule = (tokens: Token[], idx: number, options: Options, env: unknown, self: Renderer) => string;
 
 export interface CodeCopyOptions {
   iconStyle?: string;
@@ -16,7 +16,7 @@ export interface CodeCopyOptions {
 }
 
 // Browser clipboard functionality (for webview environment)
-let clipboard: any = null;
+let clipboard: { on: (event: string, callback: (e: Event) => void) => void } | null = null;
 try {
   // This will only work in browser/webview environment
   if (typeof window !== 'undefined' && window.navigator?.clipboard) {
@@ -33,7 +33,7 @@ try {
 }
 
 function renderCode(origRule: RenderRule, options: CodeCopyOptions = {}): RenderRule {
-  return (tokens: Token[], idx: number, _options: Options, env: any, renderer: Renderer) => {
+  return (tokens: Token[], idx: number, _options: Options, env: unknown, renderer: Renderer) => {
     const token = tokens[idx];
     const content = token.content.replaceAll('"', '&quot;').replaceAll("'", '&apos;');
     const origRendered = origRule(tokens, idx, _options, env, renderer);
@@ -70,6 +70,12 @@ export default function markdownItCodeCopy(md: MarkdownIt, options: CodeCopyOpti
   }
 
   // Apply the plugin to both code_block and fence rules
-  md.renderer.rules.code_block = renderCode(md.renderer.rules.code_block!, options);
-  md.renderer.rules.fence = renderCode(md.renderer.rules.fence!, options);
+  const codeBlockRule = md.renderer.rules.code_block;
+  const fenceRule = md.renderer.rules.fence;
+  if (codeBlockRule) {
+    md.renderer.rules.code_block = renderCode(codeBlockRule, options);
+  }
+  if (fenceRule) {
+    md.renderer.rules.fence = renderCode(fenceRule, options);
+  }
 }

@@ -51,7 +51,7 @@ li code {
 /* ============ 图标样式 ============ */
 
 .codicon {
-  font-family: 'codicon';
+  font-family: 'codicon', monospace;
   display: inline-block;
   vertical-align: middle;
 }
