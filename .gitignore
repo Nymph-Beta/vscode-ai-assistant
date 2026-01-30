@@ -17,6 +17,7 @@ packages/extension/webview-ui/
 
 # Documentation (plans and internal docs)
 doc/
+plans/
 
 # OS files
 .DS_Store

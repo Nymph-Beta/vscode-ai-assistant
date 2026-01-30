@@ -40,12 +40,20 @@
         "title": "VSCode Tools: 切换到调试模式"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vscode-tools-sidebar",
+          "title": "VSCode Tools",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
     "views": {
-      "explorer": [
+      "vscode-tools-sidebar": [
         {
           "id": "vscode-tools.view",
-          "name": "VSCode Tools View",
-          "icon": "$(tools)",
+          "name": "VSCode Tools",
           "type": "webview"
         }
       ]
