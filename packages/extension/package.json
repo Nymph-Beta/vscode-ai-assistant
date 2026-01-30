@@ -65,18 +65,26 @@
           "vscode-tools.ai.provider": {
             "type": "string",
             "default": "openai",
-            "enum": ["openai", "local", "custom"],
+            "enum": ["openai", "anthropic", "gemini", "ollama", "openrouter", "custom"],
+            "enumDescriptions": [
+              "OpenAI - GPT-4o, GPT-4 Turbo 等模型",
+              "Anthropic - Claude 3.5 Sonnet, Claude 3 Opus 等模型",
+              "Google Gemini - Gemini 1.5 Pro, Gemini 1.5 Flash 等模型",
+              "Ollama - 本地运行的开源模型 (Llama, Mistral 等)",
+              "OpenRouter - 统一接口访问多种模型",
+              "自定义 - OpenAI 兼容的自定义 API"
+            ],
             "description": "AI 服务提供商"
           },
           "vscode-tools.ai.apiKey": {
             "type": "string",
             "default": "",
-            "description": "API Key（对于 OpenAI 兼容服务）"
+            "description": "API Key"
           },
           "vscode-tools.ai.baseURL": {
             "type": "string",
             "default": "https://api.openai.com/v1",
-            "description": "API 基础 URL"
+            "description": "API 基础 URL（Ollama 默认: http://localhost:11434）"
           },
           "vscode-tools.ai.model": {
             "type": "string",
@@ -112,6 +120,63 @@
               "type": "string"
             },
             "description": "禁用的模式列表"
+          }
+        }
+      },
+      {
+        "title": "上下文管理",
+        "properties": {
+          "vscode-tools.context.contextWindow": {
+            "type": "number",
+            "default": 128000,
+            "description": "上下文窗口大小（tokens）"
+          },
+          "vscode-tools.context.condenseThreshold": {
+            "type": "number",
+            "default": 80,
+            "minimum": 50,
+            "maximum": 95,
+            "description": "触发对话压缩的阈值（百分比）"
+          },
+          "vscode-tools.context.enableCondensation": {
+            "type": "boolean",
+            "default": true,
+            "description": "是否启用自动对话压缩"
+          }
+        }
+      },
+      {
+        "title": "代码索引",
+        "properties": {
+          "vscode-tools.codeIndex.enabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "是否启用代码语义索引"
+          },
+          "vscode-tools.codeIndex.embeddingProvider": {
+            "type": "string",
+            "default": "openai",
+            "enum": ["openai", "ollama"],
+            "description": "嵌入向量提供商"
+          },
+          "vscode-tools.codeIndex.embeddingModel": {
+            "type": "string",
+            "default": "text-embedding-3-small",
+            "description": "嵌入模型名称"
+          },
+          "vscode-tools.codeIndex.minSearchScore": {
+            "type": "number",
+            "default": 0.3,
+            "minimum": 0,
+            "maximum": 1,
+            "description": "语义搜索最小相似度分数"
+          },
+          "vscode-tools.codeIndex.maxSearchResults": {
+            "type": "number",
+            "default": 10,
+            "minimum": 1,
+            "maximum": 50,
+            "description": "语义搜索最大结果数"
           }
         }
       }

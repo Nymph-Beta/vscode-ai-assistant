@@ -4,9 +4,9 @@
   "description": "",
   "version": "0.0.0",
   "scripts": {
-    "build": "pnpm --filter @vscode-tools/webview-ui build && pnpm --filter @vscode-tools/extension build",
+    "build": "pnpm --filter @vscode-tools/webview-ui build && pnpm --filter vscode-tools build",
     "build:ui": "pnpm --filter @vscode-tools/webview-ui build",
-    "build:extension": "pnpm --filter @vscode-tools/extension build",
+    "build:extension": "pnpm --filter vscode-tools build",
     "check": "biome check --write",
     "format": "biome format --write"
   },
