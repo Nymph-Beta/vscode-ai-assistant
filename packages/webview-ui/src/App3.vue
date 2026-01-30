@@ -1,18 +1,48 @@
 <template>
   <div class="app-container">
-    <!-- 顶部栏：模式选择器 + 状态指示器 -->
+    <!-- 顶部栏：导航标签 + 模式选择器 + 状态指示器 -->
     <header class="header">
-      <ModeSelector
-        v-model="currentModeSlug"
-        :modes="modesWithDescription"
-        :disabled="status !== 'ready'"
-        @change="onModeChange"
-      />
-      <StatusIndicator :status="indicatorStatus" :toolName="currentToolName" />
+      <div class="nav-tabs">
+        <button 
+          v-for="tab in tabs" 
+          :key="tab.id"
+          :class="['nav-tab', { active: currentView === tab.id }]"
+          @click="currentView = tab.id"
+        >
+          <i :class="['codicon', tab.icon]" />
+          <span class="tab-label">{{ tab.label }}</span>
+        </button>
+      </div>
+      <div class="header-right" v-if="currentView === 'chat'">
+        <ModeSelector
+          v-model="currentModeSlug"
+          :modes="modesWithDescription"
+          :disabled="status !== 'ready'"
+          @change="onModeChange"
+        />
+        <StatusIndicator :status="indicatorStatus" :toolName="currentToolName" />
+      </div>
     </header>
 
-    <!-- 消息列表 -->
-    <main ref="mainContainer" class="main-container">
+    <!-- Token 和上下文状态栏（仅聊天视图） -->
+    <div v-if="currentView === 'chat'" class="status-bar">
+      <TokenDisplay
+        :input-tokens="tokenUsage.input"
+        :output-tokens="tokenUsage.output"
+        :total-cost="tokenUsage.cost"
+        :cache-read-tokens="tokenUsage.cacheRead"
+        :cache-write-tokens="tokenUsage.cacheWrite"
+      />
+      <ContextProgress
+        :current-tokens="contextUsage.current"
+        :max-tokens="contextUsage.max"
+      />
+    </div>
+
+    <!-- 主内容区域 -->
+    <main class="main-wrapper">
+      <!-- 聊天视图 -->
+      <div v-show="currentView === 'chat'" ref="mainContainer" class="main-container">
       <div v-if="messages.length === 0" class="empty-state">
         <i class="codicon codicon-comment-discussion empty-icon" />
         <p class="empty-title">开始对话</p>
@@ -26,7 +56,14 @@
       </div>
       <template v-else>
         <template v-for="(msg, i) in messages" :key="i">
-          <UserMessage v-if="msg.role === 'user'" :content="msg.content" />
+          <UserMessage 
+            v-if="msg.role === 'user'" 
+            :content="msg.content"
+            :editable="status === 'ready'"
+            :deletable="status === 'ready'"
+            @edit="(newContent) => editMessage(i, newContent)"
+            @delete="deleteMessage(i)"
+          />
           <AssistantMessage 
             v-else-if="msg.role === 'assistant'" 
             :content="msg.content"
@@ -39,18 +76,48 @@
           />
         </template>
       </template>
+      </div>
+
+      <!-- 设置视图 -->
+      <SettingsView 
+        v-show="currentView === 'settings'"
+        :loaded-settings="loadedSettings"
+        @save="onSettingsSave"
+        @close="currentView = 'chat'"
+      />
+
+      <!-- 历史视图 -->
+      <HistoryView
+        v-show="currentView === 'history'"
+        :tasks="taskHistory"
+        @restore="onTaskRestore"
+        @delete="onTaskDelete"
+        @export="onTaskExport"
+      />
     </main>
 
-    <!-- 底部栏：清除按钮 + 输入框 -->
-    <footer class="footer">
-      <button 
-        class="clear-history-button" 
-        @click="clearHistory"
-        :disabled="messages.length === 0 || status !== 'ready'"
-      >
-        <i class="codicon codicon-trash" />
-        清除历史
-      </button>
+    <!-- 底部栏：操作按钮 + 输入框（仅聊天视图） -->
+    <footer v-if="currentView === 'chat'" class="footer">
+      <div class="footer-actions">
+        <button 
+          class="action-button new-chat"
+          @click="newChat"
+          :disabled="status !== 'ready'"
+          title="新建对话"
+        >
+          <i class="codicon codicon-add" />
+          新对话
+        </button>
+        <button 
+          class="action-button clear-history" 
+          @click="clearHistory"
+          :disabled="messages.length === 0 || status !== 'ready'"
+          title="清除历史"
+        >
+          <i class="codicon codicon-trash" />
+          清除
+        </button>
+      </div>
       <Sender :status="status" @submit="send" @cancel="cancel" />
     </footer>
   </div>
@@ -58,7 +125,7 @@
 
 <script setup lang="ts">
 import type { WebviewApi } from 'vscode-webview';
-import { nextTick, onMounted, onUnmounted, ref, useTemplateRef, computed } from 'vue';
+import { nextTick, onMounted, onUnmounted, ref, useTemplateRef, computed, reactive, watch } from 'vue';
 import AssistantMessage from './AssistantMessage.vue';
 import type { ToolCallInfo, MessageStatus } from './AssistantMessage.vue';
 import Sender from './Sender.vue';
@@ -67,7 +134,55 @@ import ModeSelector from './components/ModeSelector.vue';
 import type { ModeInfo } from './components/ModeSelector.vue';
 import StatusIndicator from './components/StatusIndicator.vue';
 import type { StatusType } from './components/StatusIndicator.vue';
-import SSEClientWithThinkTag from './api';
+import TokenDisplay from './components/TokenDisplay.vue';
+import ContextProgress from './components/ContextProgress.vue';
+import SettingsView from './views/SettingsView.vue';
+import HistoryView from './views/HistoryView.vue';
+
+// ============ 视图与导航 ============
+
+type ViewType = 'chat' | 'settings' | 'history';
+
+const tabs = [
+  { id: 'chat' as ViewType, label: '聊天', icon: 'codicon-comment-discussion' },
+  { id: 'history' as ViewType, label: '历史', icon: 'codicon-history' },
+  { id: 'settings' as ViewType, label: '设置', icon: 'codicon-settings-gear' },
+];
+
+const currentView = ref<ViewType>('chat');
+
+// ============ Token 和上下文状态 ============
+
+const tokenUsage = reactive({
+  input: 0,
+  output: 0,
+  cost: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+});
+
+const contextUsage = reactive({
+  current: 0,
+  max: 128000,
+});
+
+// ============ 任务历史 ============
+
+interface TaskHistoryItem {
+  id: string;
+  title: string;
+  timestamp: number;
+  tokens?: number;
+  cost?: number;
+  messageCount: number;
+  preview?: string;
+}
+
+const taskHistory = ref<TaskHistoryItem[]>([]);
+
+// ============ 设置状态 ============
+
+const loadedSettings = ref<Record<string, unknown> | undefined>(undefined);
 
 // ============ 类型定义 ============
 
@@ -131,6 +246,21 @@ type VscodeHistoryRestore = {
   payload: { messages: Array<{ role: string; content: string | null; tool_calls?: unknown[] }> };
 };
 
+type VscodeTokenUsage = {
+  command: 'xiaoke.webview.token.usage';
+  payload: { inputTokens?: number; outputTokens?: number; totalCost?: number; cacheReadTokens?: number; cacheWriteTokens?: number };
+};
+
+type VscodeTaskHistory = {
+  command: 'xiaoke.webview.task.history';
+  payload: TaskHistoryItem[];
+};
+
+type VscodeSettingsLoad = {
+  command: 'xiaoke.webview.settings.load';
+  payload: Record<string, unknown>;
+};
+
 type VscodeMessage = 
   | VscodeEnv 
   | VscodeChatOpen 
@@ -143,7 +273,10 @@ type VscodeMessage =
   | VscodeToolCall
   | VscodeToolResult
   | VscodeHistoryClear
-  | VscodeHistoryRestore;
+  | VscodeHistoryRestore
+  | VscodeTokenUsage
+  | VscodeTaskHistory
+  | VscodeSettingsLoad;
 
 // ============ 消息类型 ============
 
@@ -281,6 +414,20 @@ const vscodeListener = async (event: MessageEvent<VscodeMessage>) => {
       handleToolResult(resultPayload.name, resultPayload.result);
       break;
     }
+    case 'xiaoke.webview.token.usage': {
+      const usagePayload = payload as VscodeTokenUsage['payload'];
+      handleTokenUsage(usagePayload);
+      break;
+    }
+    case 'xiaoke.webview.task.history': {
+      taskHistory.value = payload as TaskHistoryItem[];
+      break;
+    }
+    case 'xiaoke.webview.settings.load': {
+      loadedSettings.value = payload as Record<string, unknown>;
+      console.log('[App3] 收到设置:', loadedSettings.value);
+      break;
+    }
     default:
       console.warn('Unknown command:', command);
   }
@@ -297,6 +444,10 @@ onMounted(() => {
     vscode.postMessage({ command: 'xiaoke.webview.mode.get' });
     // 请求恢复历史消息（如果有的话）
     vscode.postMessage({ command: 'xiaoke.webview.history.restore' });
+    // 请求加载设置
+    vscode.postMessage({ command: 'xiaoke.webview.settings.load' });
+    // 请求任务历史
+    vscode.postMessage({ command: 'xiaoke.webview.task.list' });
   }
 });
 
@@ -457,40 +608,11 @@ const handleToolResult = (name: string, result: { success: boolean; content: str
 
 // ============ SSE 客户端（开发模式） ============
 
-// 开发模式下的消息处理兼容层
-const handleChatMessageCompat = (type: "thinking" | "answering", buffer: string) => {
-  if (type === 'thinking') {
-    // 模拟 reasoning 消息（累积模式）
-    if (index.value >= 0 && index.value < messages.value.length) {
-      const msg = messages.value[index.value] as AMessage;
-      msg.reasoning_content += buffer;
-      msg.reasoningPartial = true;
-      if (!msg.reasoningStartTime) {
-        msg.reasoningStartTime = Date.now();
-      }
-    }
-  } else {
-    handleChatTextMessage(buffer);
-  }
-  scrollToBottom();
-};
-
-const client = new SSEClientWithThinkTag(
-  baseURL.value,
-  thinkTag.value,
-  handleChatOpen,
-  handleChatMessageCompat,
-  handleChatClose,
-  handleChatError,
-);
-
 // ============ 用户操作 ============
 
 async function cancel() {
   if (vscode !== undefined) {
     vscode.postMessage({ command: 'xiaoke.webview.chat.cancel' });
-  } else {
-    await client.cancel();
   }
   status.value = 'ready';
   currentToolName.value = undefined;
@@ -510,8 +632,6 @@ async function send(content: string) {
 
   if (vscode !== undefined) {
     vscode.postMessage({ command: 'xiaoke.webview.chat.invoke', payload: content });
-  } else {
-    await client.invoke(content);
   }
 }
 
@@ -519,6 +639,22 @@ function clearHistory() {
   messages.value = [];
   if (vscode !== undefined) {
     vscode.postMessage({ command: 'xiaoke.webview.chat.clear' });
+  }
+}
+
+function newChat() {
+  // 清除前端消息
+  messages.value = [];
+  // 重置 token 使用统计
+  tokenUsage.input = 0;
+  tokenUsage.output = 0;
+  tokenUsage.cost = 0;
+  tokenUsage.cacheRead = 0;
+  tokenUsage.cacheWrite = 0;
+  contextUsage.current = 0;
+  // 通知扩展新建对话
+  if (vscode !== undefined) {
+    vscode.postMessage({ command: 'xiaoke.webview.chat.new' });
   }
 }
 
@@ -562,6 +698,67 @@ function onModeChange(slug: string) {
   }
 }
 
+// ============ 消息编辑/删除 ============
+
+function editMessage(msgIndex: number, newContent: string) {
+  if (msgIndex >= 0 && msgIndex < messages.value.length && messages.value[msgIndex].role === 'user') {
+    messages.value[msgIndex].content = newContent;
+    // 删除该消息之后的所有消息（准备重新生成）
+    messages.value = messages.value.slice(0, msgIndex + 1);
+    // 通知扩展
+    vscode?.postMessage({ command: 'xiaoke.webview.message.edit', payload: { index: msgIndex, content: newContent } });
+  }
+}
+
+function deleteMessage(msgIndex: number) {
+  if (msgIndex >= 0 && msgIndex < messages.value.length) {
+    messages.value.splice(msgIndex, 1);
+    vscode?.postMessage({ command: 'xiaoke.webview.message.delete', payload: { index: msgIndex } });
+  }
+}
+
+// ============ 设置处理 ============
+
+// biome-ignore lint/suspicious/noExplicitAny: Settings type from SettingsView
+function onSettingsSave(newSettings: any) {
+  vscode?.postMessage({ command: 'xiaoke.webview.settings.save', payload: newSettings });
+}
+
+// ============ 历史任务处理 ============
+
+function onTaskRestore(task: { id: string }) {
+  console.log('[App3] 恢复任务:', task.id);
+  vscode?.postMessage({ command: 'xiaoke.webview.task.restore', payload: { taskId: task.id } });
+  currentView.value = 'chat';
+}
+
+// 当切换到历史视图时，请求最新的任务历史
+watch(currentView, (newView) => {
+  if (newView === 'history' && vscode !== undefined) {
+    vscode.postMessage({ command: 'xiaoke.webview.task.list' });
+  }
+});
+
+function onTaskDelete(taskIds: string[]) {
+  taskHistory.value = taskHistory.value.filter(t => !taskIds.includes(t.id));
+  vscode?.postMessage({ command: 'xiaoke.webview.task.delete', payload: { taskIds } });
+}
+
+function onTaskExport(task: { id: string }) {
+  vscode?.postMessage({ command: 'xiaoke.webview.task.export', payload: { taskId: task.id } });
+}
+
+// ============ Token 使用更新 ============
+
+function handleTokenUsage(usage: { inputTokens?: number; outputTokens?: number; totalCost?: number; cacheReadTokens?: number; cacheWriteTokens?: number }) {
+  if (usage.inputTokens !== undefined) tokenUsage.input += usage.inputTokens;
+  if (usage.outputTokens !== undefined) tokenUsage.output += usage.outputTokens;
+  if (usage.totalCost !== undefined) tokenUsage.cost += usage.totalCost;
+  if (usage.cacheReadTokens !== undefined) tokenUsage.cacheRead += usage.cacheReadTokens;
+  if (usage.cacheWriteTokens !== undefined) tokenUsage.cacheWrite += usage.cacheWriteTokens;
+  contextUsage.current = tokenUsage.input + tokenUsage.output;
+}
+
 // ============ 滚动辅助 ============
 
 const mainContainer = useTemplateRef('mainContainer');
@@ -589,9 +786,81 @@ const scrollToBottom = () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--vscode-panel-border);
   background: var(--vscode-sideBar-background);
+  gap: 8px;
+}
+
+.nav-tabs {
+  display: flex;
+  gap: 2px;
+}
+
+.nav-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  font-size: 11px;
+  opacity: 0.7;
+  transition: all 0.15s ease;
+}
+
+.nav-tab:hover {
+  opacity: 1;
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.nav-tab.active {
+  opacity: 1;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.nav-tab .codicon {
+  font-size: 14px;
+}
+
+.tab-label {
+  display: none;
+}
+
+@media (min-width: 300px) {
+  .tab-label {
+    display: inline;
+  }
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  justify-content: flex-end;
+}
+
+.status-bar {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 12px;
+  background: var(--vscode-editorWidget-background);
+  border-bottom: 1px solid var(--vscode-panel-border);
+  font-size: 11px;
+}
+
+.main-wrapper {
+  flex: 1 1 auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .main-container {
@@ -659,15 +928,20 @@ const scrollToBottom = () => {
   font-size: 12px;
 }
 
-/* 清除历史按钮 */
-.clear-history-button {
+/* 底部操作按钮 */
+.footer-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.action-button {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  width: 100%;
+  gap: 4px;
+  flex: 1;
   padding: 6px 12px;
-  margin-bottom: 8px;
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: 1px solid transparent;
@@ -677,18 +951,23 @@ const scrollToBottom = () => {
   transition: all 0.15s ease;
 }
 
-.clear-history-button:hover:not(:disabled) {
+.action-button:hover:not(:disabled) {
   background: var(--vscode-button-secondaryHoverBackground);
   border-color: var(--vscode-focusBorder);
 }
 
-.clear-history-button:disabled {
+.action-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.clear-history-button .codicon {
+.action-button .codicon {
   font-size: 14px;
+}
+
+.action-button.new-chat:hover:not(:disabled) {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
 }
 
 /* 滚动条样式 */

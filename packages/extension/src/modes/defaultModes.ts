@@ -26,16 +26,21 @@ export const CODE_MODE: Mode = {
   allowedTools: [
     "read_file",
     "write_to_file",
+    "edit_file",
+    "apply_diff",
     "list_files",
     "search_files",
     "execute_command",
+    "checkpoint",
   ],
   customInstructions: `
 在编写代码时：
 - 保持代码简洁清晰
 - 添加必要的注释
 - 遵循项目的代码风格
-- 考虑边界情况和错误处理`,
+- 考虑边界情况和错误处理
+- 对于小范围修改优先使用 edit_file，对于新文件或完全重写使用 write_to_file
+- 进行大量修改前建议创建检查点以便回滚`,
 };
 
 /** 架构师模式 - 规划系统、规范和迁移 */
@@ -123,6 +128,8 @@ export const DEBUG_MODE: Mode = {
   allowedTools: [
     "read_file",
     "write_to_file",
+    "edit_file",
+    "apply_diff",
     "search_files",
     "execute_command",
   ],
@@ -131,7 +138,8 @@ export const DEBUG_MODE: Mode = {
 - 系统性地分析问题
 - 优先查看错误日志和堆栈
 - 考虑边界情况和环境因素
-- 添加临时日志时标记清楚，便于后续清理`,
+- 添加临时日志时标记清楚，便于后续清理
+- 使用 edit_file 进行小范围修改以快速验证假设`,
 };
 
 /** 所有默认模式 */

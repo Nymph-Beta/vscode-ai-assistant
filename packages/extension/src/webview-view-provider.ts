@@ -1,5 +1,6 @@
 import {
   type CancellationToken,
+  type ExtensionContext,
   type WebviewView,
   type WebviewViewProvider,
   type WebviewViewResolveContext,
@@ -10,22 +11,177 @@ import {
 import * as fs from "node:fs";
 import { aiService, type ChatMessage, type ToolCall, type ApiStreamChunk } from "./ai_service";
 import { createDefaultToolRegistry, type ToolRegistry, type ToolResult } from "./tools";
-import { modeManager, type Mode } from "./modes";
+import { modeManager } from "./modes";
 import { contextCollector } from "./context";
+import {
+  CheckpointManager,
+  FileCheckpointStorage,
+} from "./checkpoint";
+import { CodeIndexManager } from "./code-index";
+import {
+  getContextState,
+  needsContextManagement,
+  manageContext,
+  tokenCounter,
+  type ContextState,
+} from "./context-management";
+
+/** 任务历史项 */
+interface TaskHistoryItem {
+  id: string;
+  title: string;
+  timestamp: number;
+  tokens?: number;
+  cost?: number;
+  messageCount: number;
+  preview?: string;
+  messages: ChatMessage[];
+}
 
 export class VSCodeToolsViewProvider implements WebviewViewProvider {
   private _view?: WebviewView;
   private _messages: ChatMessage[] = [];
   private _toolRegistry: ToolRegistry;
+  private _currentTaskId = "";
+  private _taskHistory: TaskHistoryItem[] = [];
+  private _totalTokens = 0;
+  private _totalCost = 0;
 
-  constructor(private readonly _extensionUri: Uri) {
+  // 管理器
+  private _checkpointManager?: CheckpointManager;
+  private _codeIndexManager?: CodeIndexManager;
+  private _contextWindow = 128000;
+
+  constructor(
+    private readonly _extensionUri: Uri,
+    private readonly _extensionContext?: ExtensionContext
+  ) {
     console.log("VSCodeToolsViewProvider constructor called");
 
-    // 初始化工具注册表
-    this._toolRegistry = createDefaultToolRegistry();
+    // 初始化检查点管理器
+    this._initCheckpointManager();
+
+    // 初始化代码索引管理器（可选）
+    this._initCodeIndexManager();
+
+    // 初始化工具注册表（传入管理器）
+    this._toolRegistry = createDefaultToolRegistry({
+      checkpointManager: this._checkpointManager,
+      codeIndexManager: this._codeIndexManager,
+    });
     aiService.setToolRegistry(this._toolRegistry);
 
+    // 初始化第一个任务
+    this._startNewTask();
+
+    // 加载上下文窗口配置
+    this._loadContextConfig();
+
     console.log(`[VSCodeToolsViewProvider] 已注册 ${this._toolRegistry.size} 个工具`);
+  }
+
+  /** 初始化检查点管理器 */
+  private _initCheckpointManager(): void {
+    if (!this._extensionContext) {
+      console.log("[CheckpointManager] 未提供 ExtensionContext，跳过初始化");
+      return;
+    }
+
+    try {
+      const storage = new FileCheckpointStorage(this._extensionContext);
+      this._checkpointManager = new CheckpointManager(storage);
+      console.log("[CheckpointManager] 初始化成功");
+    } catch (error) {
+      console.error("[CheckpointManager] 初始化失败:", error);
+    }
+  }
+
+  /** 初始化代码索引管理器 */
+  private _initCodeIndexManager(): void {
+    const config = workspace.getConfiguration("vscode-tools.codeIndex");
+    const enabled = config.get<boolean>("enabled", false);
+
+    if (!enabled) {
+      console.log("[CodeIndexManager] 代码索引未启用");
+      return;
+    }
+
+    try {
+      this._codeIndexManager = CodeIndexManager.getInstance(this._extensionContext);
+      console.log("[CodeIndexManager] 初始化成功");
+    } catch (error) {
+      console.error("[CodeIndexManager] 初始化失败:", error);
+    }
+  }
+
+  /** 加载上下文配置 */
+  private _loadContextConfig(): void {
+    const config = workspace.getConfiguration("vscode-tools.context");
+    this._contextWindow = config.get<number>("contextWindow", 128000);
+  }
+
+  /** 生成任务 ID */
+  private _generateTaskId(): string {
+    return `task_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  }
+
+  /** 开始新任务 */
+  private _startNewTask(): void {
+    this._currentTaskId = this._generateTaskId();
+    this._messages = [];
+    this._totalTokens = 0;
+    this._totalCost = 0;
+    console.log(`[任务] 开始新任务: ${this._currentTaskId}`);
+  }
+
+  /** 保存当前任务到历史 */
+  private _saveCurrentTaskToHistory(): void {
+    if (this._messages.length === 0) {
+      console.log("[任务] 当前任务为空，不保存到历史");
+      return;
+    }
+
+    // 生成任务标题（取第一条用户消息的前50个字符）
+    const firstUserMsg = this._messages.find(m => m.role === "user");
+    const title = firstUserMsg?.content 
+      ? (typeof firstUserMsg.content === "string" 
+          ? firstUserMsg.content.substring(0, 50) 
+          : "对话")
+      : "未命名对话";
+
+    // 生成预览（取最后一条用户消息）
+    const lastUserMsg = [...this._messages].reverse().find(m => m.role === "user");
+    const preview = lastUserMsg?.content
+      ? (typeof lastUserMsg.content === "string"
+          ? lastUserMsg.content.substring(0, 100)
+          : "")
+      : "";
+
+    const task: TaskHistoryItem = {
+      id: this._currentTaskId,
+      title: title + (title.length >= 50 ? "..." : ""),
+      timestamp: Date.now(),
+      tokens: this._totalTokens,
+      cost: this._totalCost,
+      messageCount: this._messages.filter(m => m.role === "user" || m.role === "assistant").length,
+      preview: preview + (preview.length >= 100 ? "..." : ""),
+      messages: [...this._messages],
+    };
+
+    // 检查是否已存在相同 ID 的任务（更新而非添加）
+    const existingIndex = this._taskHistory.findIndex(t => t.id === this._currentTaskId);
+    if (existingIndex >= 0) {
+      this._taskHistory[existingIndex] = task;
+    } else {
+      this._taskHistory.unshift(task); // 添加到最前面
+    }
+
+    // 限制历史数量（最多保留50个）
+    if (this._taskHistory.length > 50) {
+      this._taskHistory = this._taskHistory.slice(0, 50);
+    }
+
+    console.log(`[任务] 已保存任务到历史: ${task.title}, 共 ${this._taskHistory.length} 个任务`);
   }
 
   // 视图变为可用时调用
@@ -98,6 +254,42 @@ export class VSCodeToolsViewProvider implements WebviewViewProvider {
         // 恢复历史
         case "xiaoke.webview.history.restore":
           this._sendHistoryMessages();
+          break;
+
+        // 设置相关命令
+        case "xiaoke.webview.settings.load":
+          this._sendSettings();
+          break;
+
+        case "xiaoke.webview.settings.save":
+          await this._handleSaveSettings(message.payload);
+          break;
+
+        // 消息编辑/删除
+        case "xiaoke.webview.message.edit":
+          await this._handleMessageEdit(message.payload?.index, message.payload?.content);
+          break;
+
+        case "xiaoke.webview.message.delete":
+          this._handleMessageDelete(message.payload?.index);
+          break;
+
+        // 新建对话
+        case "xiaoke.webview.chat.new":
+          this._handleNewChat();
+          break;
+
+        // 任务历史相关
+        case "xiaoke.webview.task.list":
+          this._sendTaskHistory();
+          break;
+
+        case "xiaoke.webview.task.restore":
+          this._handleTaskRestore(message.payload?.taskId);
+          break;
+
+        case "xiaoke.webview.task.delete":
+          this._handleTaskDelete(message.payload?.taskIds);
           break;
 
         default:
@@ -175,12 +367,115 @@ export class VSCodeToolsViewProvider implements WebviewViewProvider {
     });
   }
 
+  /** 发送 Token 使用量更新 */
+  private _sendUsageUpdate(inputTokens: number, outputTokens: number) {
+    // 获取上下文状态
+    const contextState = getContextState(
+      this._messages as unknown as import("./context-management").ApiMessage[],
+      { contextWindow: this._contextWindow }
+    );
+
+    this._view?.webview.postMessage({
+      command: "xiaoke.webview.chat.usage",
+      payload: {
+        inputTokens,
+        outputTokens,
+        totalTokens: this._totalTokens,
+        totalCost: this._totalCost,
+        contextState: {
+          currentTokens: contextState.currentTokens,
+          contextWindow: contextState.contextWindow,
+          usagePercent: contextState.usagePercent,
+          nearThreshold: contextState.nearThreshold,
+        },
+      },
+    });
+  }
+
   /** 返回环境配置 */
   private _sendEnv(key: string, value: unknown) {
     this._view?.webview.postMessage({
       command: "xiaoke.webview.env",
       payload: { key, value },
     });
+  }
+
+  /** 发送所有设置到 Webview */
+  private _sendSettings() {
+    const aiConfig = workspace.getConfiguration("vscode-tools.ai");
+    const modesConfig = workspace.getConfiguration("vscode-tools.modes");
+
+    const settings = {
+      // AI Provider
+      provider: aiConfig.get<string>("provider", "openai"),
+      apiKey: aiConfig.get<string>("apiKey", ""),
+      baseURL: aiConfig.get<string>("baseURL", "https://api.openai.com/v1"),
+      model: aiConfig.get<string>("model", "gpt-4o-mini"),
+      // Context Management
+      contextWindow: 128000,
+      condenseThreshold: 80,
+      enableCondensation: true,
+      // Code Index
+      codeIndexEnabled: false,
+      embeddingProvider: "openai",
+      embeddingModel: "text-embedding-3-small",
+      // UI
+      showTokenUsage: true,
+      showCostEstimate: true,
+      // Mode
+      defaultMode: modesConfig.get<string>("defaultMode", "code"),
+      thinkTag: aiConfig.get<boolean>("thinkTag", false),
+    };
+
+    this._view?.webview.postMessage({
+      command: "xiaoke.webview.settings.load",
+      payload: settings,
+    });
+  }
+
+  /** 处理保存设置 */
+  private async _handleSaveSettings(newSettings: Record<string, unknown>) {
+    if (!newSettings) return;
+
+    const aiConfig = workspace.getConfiguration("vscode-tools.ai");
+    const modesConfig = workspace.getConfiguration("vscode-tools.modes");
+
+    try {
+      // 保存 AI 配置
+      if (newSettings.provider !== undefined) {
+        await aiConfig.update("provider", newSettings.provider, true);
+      }
+      if (newSettings.apiKey !== undefined) {
+        await aiConfig.update("apiKey", newSettings.apiKey, true);
+      }
+      if (newSettings.baseURL !== undefined) {
+        await aiConfig.update("baseURL", newSettings.baseURL, true);
+      }
+      if (newSettings.model !== undefined) {
+        await aiConfig.update("model", newSettings.model, true);
+      }
+      if (newSettings.thinkTag !== undefined) {
+        await aiConfig.update("thinkTag", newSettings.thinkTag, true);
+      }
+
+      // 保存模式配置
+      if (newSettings.defaultMode !== undefined) {
+        await modesConfig.update("defaultMode", newSettings.defaultMode, true);
+      }
+
+      console.log("设置已保存到 VS Code 配置");
+
+      // 刷新 AI 服务配置（重新初始化 Provider）
+      aiService.refreshConfig();
+      console.log(`[设置] AI Provider 已刷新: ${aiService.getProvider()?.name}`);
+
+      // 如果更改了模式，同步刷新
+      if (newSettings.defaultMode !== undefined) {
+        modeManager.refreshConfig();
+      }
+    } catch (error) {
+      console.error("保存设置失败:", error);
+    }
   }
 
   /** 发送模式列表 */
@@ -247,6 +542,127 @@ export class VSCodeToolsViewProvider implements WebviewViewProvider {
     });
   }
 
+  /** 处理消息编辑 - 编辑后重新发送 */
+  private async _handleMessageEdit(msgIndex: number, newContent: string): Promise<void> {
+    if (msgIndex === undefined || msgIndex < 0 || !newContent) {
+      console.warn("消息编辑参数无效:", { msgIndex, newContent });
+      return;
+    }
+
+    console.log(`[消息编辑] 编辑索引 ${msgIndex} 的消息`);
+
+    // 截断消息历史到编辑位置（包含编辑的消息）
+    this._messages = this._messages.slice(0, msgIndex);
+
+    // 更新编辑的用户消息
+    // 注意：前端已经更新了显示，这里只需要重新发送
+    // 调用聊天处理
+    await this._handleChatInvoke(newContent);
+  }
+
+  /** 处理消息删除 */
+  private _handleMessageDelete(msgIndex: number): void {
+    if (msgIndex === undefined || msgIndex < 0 || msgIndex >= this._messages.length) {
+      console.warn("消息删除参数无效:", { msgIndex, total: this._messages.length });
+      return;
+    }
+
+    console.log(`[消息删除] 删除索引 ${msgIndex} 的消息`);
+
+    // 从历史中删除消息
+    this._messages.splice(msgIndex, 1);
+
+    console.log(`[消息删除] 剩余 ${this._messages.length} 条消息`);
+  }
+
+  /** 处理新建对话 */
+  private _handleNewChat(): void {
+    console.log("[新建对话] 保存当前任务，开始新对话");
+
+    // 保存当前任务到历史（如果有消息）
+    this._saveCurrentTaskToHistory();
+
+    // 开始新任务
+    this._startNewTask();
+
+    // 通知前端清除
+    this._view?.webview.postMessage({
+      command: "xiaoke.webview.history.clear",
+    });
+
+    // 发送更新后的任务历史
+    this._sendTaskHistory();
+  }
+
+  /** 发送任务历史到前端 */
+  private _sendTaskHistory(): void {
+    // 发送时不包含完整消息，只发送元数据
+    const historyForUI = this._taskHistory.map(t => ({
+      id: t.id,
+      title: t.title,
+      timestamp: t.timestamp,
+      tokens: t.tokens,
+      cost: t.cost,
+      messageCount: t.messageCount,
+      preview: t.preview,
+    }));
+
+    this._view?.webview.postMessage({
+      command: "xiaoke.webview.task.history",
+      payload: historyForUI,
+    });
+
+    console.log(`[任务历史] 已发送 ${historyForUI.length} 个任务到前端`);
+  }
+
+  /** 恢复任务 */
+  private _handleTaskRestore(taskId: string): void {
+    if (!taskId) {
+      console.warn("[任务恢复] 未提供任务 ID");
+      return;
+    }
+
+    const task = this._taskHistory.find(t => t.id === taskId);
+    if (!task) {
+      console.warn(`[任务恢复] 未找到任务: ${taskId}`);
+      return;
+    }
+
+    console.log(`[任务恢复] 恢复任务: ${task.title}`);
+
+    // 保存当前任务（如果有消息）
+    this._saveCurrentTaskToHistory();
+
+    // 恢复选中的任务
+    this._currentTaskId = task.id;
+    this._messages = [...task.messages];
+    this._totalTokens = task.tokens || 0;
+    this._totalCost = task.cost || 0;
+
+    // 发送消息到前端
+    this._sendHistoryMessages();
+
+    // 更新任务历史列表
+    this._sendTaskHistory();
+  }
+
+  /** 删除任务 */
+  private _handleTaskDelete(taskIds: string[]): void {
+    if (!taskIds || taskIds.length === 0) {
+      console.warn("[任务删除] 未提供任务 ID");
+      return;
+    }
+
+    const beforeCount = this._taskHistory.length;
+    this._taskHistory = this._taskHistory.filter(t => !taskIds.includes(t.id));
+    const deletedCount = beforeCount - this._taskHistory.length;
+
+    console.log(`[任务删除] 删除了 ${deletedCount} 个任务`);
+
+    // 发送更新后的任务历史
+    this._sendTaskHistory();
+  }
+
   // ============ 处理聊天请求 ============
   private async _handleChatInvoke(prompt: string) {
     console.log("处理聊天请求:", prompt);
@@ -307,7 +723,7 @@ export class VSCodeToolsViewProvider implements WebviewViewProvider {
 
             case 'text':
               textContent += chunk.content;
-              console.log("发送 text 消息:", chunk.content);
+              // console.log("发送 text 消息:", chunk.content);
               // 发送增量文本
               this._sendChatMessage(chunk.content);
               break;
@@ -322,7 +738,15 @@ export class VSCodeToolsViewProvider implements WebviewViewProvider {
 
             case 'usage':
               console.log(`Token 使用: 输入=${chunk.inputTokens}, 输出=${chunk.outputTokens}`);
+              this._totalTokens += chunk.inputTokens + chunk.outputTokens;
+              // 发送 token 使用情况到前端
+              this._sendUsageUpdate(chunk.inputTokens, chunk.outputTokens);
               break;
+
+            case 'error':
+              console.error("API 错误:", chunk.error);
+              this._sendChatError(chunk.error);
+              return;
           }
         }
 

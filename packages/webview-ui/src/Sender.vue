@@ -51,7 +51,9 @@ function adjustHeight(event: Event) {
   height.value = 'auto';
   const textarea = event.target as HTMLTextAreaElement | null;
   if (textarea) {
-    nextTick(() => (height.value = `${textarea.scrollHeight}px`));
+    nextTick(() => {
+      height.value = `${textarea.scrollHeight}px`;
+    });
   }
 }
 

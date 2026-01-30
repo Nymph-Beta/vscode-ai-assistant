@@ -20,8 +20,8 @@ export function activate(context: ExtensionContext) {
   console.log(`激活时间: ${new Date().toISOString()}`);
   console.log('========================================');
 
-  // 创建 WebviewViewProvider
-  provider = new VSCodeToolsViewProvider(context.extensionUri);
+  // 创建 WebviewViewProvider（传入 ExtensionContext 以支持检查点等功能）
+  provider = new VSCodeToolsViewProvider(context.extensionUri, context);
 
   // 注册 WebviewViewProvider
   context.subscriptions.push(
