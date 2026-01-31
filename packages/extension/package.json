@@ -179,6 +179,25 @@
             "description": "语义搜索最大结果数"
           }
         }
+      },
+      {
+        "title": "工具设置",
+        "properties": {
+          "vscode-tools.tools.requireApproval": {
+            "type": "boolean",
+            "default": true,
+            "description": "工具调用前是否需要用户批准"
+          },
+          "vscode-tools.tools.autoApprove": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "type": "string",
+              "enum": ["read_file", "list_files", "search_files", "execute_command", "write_to_file", "edit_file", "apply_diff", "checkpoint", "codebase_search"]
+            },
+            "description": "自动批准的工具列表（这些工具将跳过用户确认）"
+          }
+        }
       }
     ]
   },

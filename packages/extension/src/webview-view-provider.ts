@@ -52,6 +52,14 @@ export class VSCodeToolsViewProvider implements WebviewViewProvider {
   private _codeIndexManager?: CodeIndexManager;
   private _contextWindow = 128000;
 
+  // 工具批准系统
+  private _pendingToolApprovals = new Map<string, {
+    toolCall: ToolCall;
+    resolve: (approved: boolean) => void;
+  }>();
+  private _autoApproveTools: string[] = []; // 自动批准的工具列表
+  private _requireApproval = true; // 是否需要用户批准
+
   constructor(
     private readonly _extensionUri: Uri,
     private readonly _extensionContext?: ExtensionContext
@@ -118,6 +126,13 @@ export class VSCodeToolsViewProvider implements WebviewViewProvider {
   private _loadContextConfig(): void {
     const config = workspace.getConfiguration("vscode-tools.context");
     this._contextWindow = config.get<number>("contextWindow", 128000);
+
+    // 加载工具批准配置
+    const toolsConfig = workspace.getConfiguration("vscode-tools.tools");
+    this._requireApproval = toolsConfig.get<boolean>("requireApproval", true);
+    this._autoApproveTools = toolsConfig.get<string[]>("autoApprove", []);
+
+    console.log(`[工具配置] 需要批准: ${this._requireApproval}, 自动批准: ${this._autoApproveTools.join(", ") || "无"}`);
   }
 
   /** 生成任务 ID */
@@ -290,6 +305,15 @@ export class VSCodeToolsViewProvider implements WebviewViewProvider {
 
         case "xiaoke.webview.task.delete":
           this._handleTaskDelete(message.payload?.taskIds);
+          break;
+
+        // 工具批准/拒绝
+        case "xiaoke.webview.tool.approve":
+          this._handleToolApproval(message.payload?.toolCallId, true);
+          break;
+
+        case "xiaoke.webview.tool.reject":
+          this._handleToolApproval(message.payload?.toolCallId, false);
           break;
 
         default:
@@ -810,6 +834,60 @@ export class VSCodeToolsViewProvider implements WebviewViewProvider {
     }
   }
 
+  /** 处理工具批准/拒绝 */
+  private _handleToolApproval(toolCallId: string, approved: boolean): void {
+    const pending = this._pendingToolApprovals.get(toolCallId);
+    if (pending) {
+      console.log(`[工具批准] ${toolCallId}: ${approved ? "已批准" : "已拒绝"}`);
+      pending.resolve(approved);
+      this._pendingToolApprovals.delete(toolCallId);
+    } else {
+      console.warn(`[工具批准] 未找到待批准的工具调用: ${toolCallId}`);
+    }
+  }
+
+  /** 发送工具批准请求到 UI */
+  private _sendToolApprovalRequest(toolCallId: string, toolName: string, args: Record<string, unknown>): void {
+    this._view?.webview.postMessage({
+      command: "xiaoke.webview.tool.approval_request",
+      payload: { toolCallId, toolName, args },
+    });
+  }
+
+  /** 检查工具是否需要批准 */
+  private _needsApproval(toolName: string): boolean {
+    // 如果全局禁用批准，直接返回 false
+    if (!this._requireApproval) {
+      return false;
+    }
+    // 如果工具在自动批准列表中，不需要批准
+    if (this._autoApproveTools.includes(toolName)) {
+      return false;
+    }
+    // 只读工具可以考虑自动批准
+    const readOnlyTools = ["read_file", "list_files", "search_files"];
+    // 默认只读工具也需要批准，除非在配置中排除
+    return true;
+  }
+
+  /** 等待用户批准工具调用 */
+  private async _waitForApproval(toolCall: ToolCall): Promise<boolean> {
+    return new Promise((resolve) => {
+      this._pendingToolApprovals.set(toolCall.id, {
+        toolCall,
+        resolve,
+      });
+
+      // 设置超时（可选，60秒后自动拒绝）
+      // setTimeout(() => {
+      //   if (this._pendingToolApprovals.has(toolCall.id)) {
+      //     this._pendingToolApprovals.delete(toolCall.id);
+      //     resolve(false);
+      //   }
+      // }, 60000);
+    });
+  }
+
   /** 执行工具调用 */
   private async _executeToolCall(toolCall: ToolCall): Promise<ToolResult> {
     const { name, arguments: argsStr } = toolCall.function;
@@ -827,6 +905,30 @@ export class VSCodeToolsViewProvider implements WebviewViewProvider {
         content: "",
         error: `无法解析工具参数: ${argsStr}`,
       };
+    }
+
+    // 检查是否需要用户批准
+    if (this._needsApproval(name)) {
+      console.log(`[工具批准] 等待用户批准: ${name}`);
+      
+      // 发送批准请求到 UI
+      this._sendToolApprovalRequest(toolCall.id, name, args);
+
+      // 等待用户批准
+      const approved = await this._waitForApproval(toolCall);
+
+      if (!approved) {
+        console.log(`[工具批准] 用户拒绝了工具调用: ${name}`);
+        // 通知 UI 工具被拒绝
+        this._sendToolRejected(name, args);
+        return {
+          success: false,
+          content: "",
+          error: `用户拒绝执行工具: ${name}`,
+        };
+      }
+
+      console.log(`[工具批准] 用户批准了工具调用: ${name}`);
     }
 
     // 通知 UI 工具开始执行
@@ -853,6 +955,14 @@ export class VSCodeToolsViewProvider implements WebviewViewProvider {
     }
 
     return result;
+  }
+
+  /** 通知 UI 工具被拒绝 */
+  private _sendToolRejected(toolName: string, args: Record<string, unknown>): void {
+    this._view?.webview.postMessage({
+      command: "xiaoke.webview.tool.rejected",
+      payload: { name: toolName, args },
+    });
   }
 
   private _getHtmlForWebview(webview: Webview): string {

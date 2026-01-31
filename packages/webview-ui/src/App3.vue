@@ -73,6 +73,8 @@
             :isLast="i === messages.length - 1"
             :status="msg.status"
             :toolCalls="msg.toolCalls"
+            @tool-approve="onToolApprove"
+            @tool-reject="onToolReject"
           />
         </template>
       </template>
@@ -236,6 +238,16 @@ type VscodeToolResult = {
   payload: { name: string; result: { success: boolean; content: string; error?: string } };
 };
 
+type VscodeToolApprovalRequest = {
+  command: 'xiaoke.webview.tool.approval_request';
+  payload: { toolCallId: string; toolName: string; args: Record<string, unknown> };
+};
+
+type VscodeToolRejected = {
+  command: 'xiaoke.webview.tool.rejected';
+  payload: { name: string; args: Record<string, unknown> };
+};
+
 type VscodeHistoryClear = {
   command: 'xiaoke.webview.history.clear';
   payload?: undefined;
@@ -272,6 +284,8 @@ type VscodeMessage =
   | VscodeModeCurrent
   | VscodeToolCall
   | VscodeToolResult
+  | VscodeToolApprovalRequest
+  | VscodeToolRejected
   | VscodeHistoryClear
   | VscodeHistoryRestore
   | VscodeTokenUsage
@@ -412,6 +426,16 @@ const vscodeListener = async (event: MessageEvent<VscodeMessage>) => {
     case 'xiaoke.webview.tool.result': {
       const resultPayload = payload as VscodeToolResult['payload'];
       handleToolResult(resultPayload.name, resultPayload.result);
+      break;
+    }
+    case 'xiaoke.webview.tool.approval_request': {
+      const approvalPayload = payload as VscodeToolApprovalRequest['payload'];
+      handleToolApprovalRequest(approvalPayload.toolCallId, approvalPayload.toolName, approvalPayload.args);
+      break;
+    }
+    case 'xiaoke.webview.tool.rejected': {
+      const rejectedPayload = payload as VscodeToolRejected['payload'];
+      handleToolRejected(rejectedPayload.name);
       break;
     }
     case 'xiaoke.webview.token.usage': {
@@ -562,6 +586,31 @@ const handleChatError = (err: unknown) => {
 
 // ============ 工具调用处理 ============
 
+/** 处理工具批准请求（工具等待用户批准） */
+const handleToolApprovalRequest = (toolCallId: string, toolName: string, args: Record<string, unknown>) => {
+  console.log('Tool approval request:', toolCallId, toolName, args);
+  currentToolName.value = toolName;
+  
+  if (index.value >= 0 && index.value < messages.value.length) {
+    const msg = messages.value[index.value] as AMessage;
+    if (!msg.toolCalls) {
+      msg.toolCalls = [];
+    }
+    
+    const toolCall: ToolCallInfo = {
+      id: `tool_${++toolCallCounter}`,
+      name: toolName,
+      args,
+      status: 'waiting_approval',
+      toolCallId, // 保存后端的工具调用 ID
+    };
+    
+    msg.toolCalls.push(toolCall);
+    scrollToBottom();
+  }
+};
+
+/** 处理工具调用（工具开始执行） */
 const handleToolCall = (name: string, args: Record<string, unknown>) => {
   console.log('Tool call:', name, args);
   currentToolName.value = name;
@@ -572,6 +621,14 @@ const handleToolCall = (name: string, args: Record<string, unknown>) => {
       msg.toolCalls = [];
     }
     
+    // 检查是否有等待批准的同名工具，更新其状态
+    const pendingTool = msg.toolCalls.find(t => t.name === name && t.status === 'waiting_approval');
+    if (pendingTool) {
+      pendingTool.status = 'running';
+      return;
+    }
+    
+    // 否则创建新的工具调用（自动批准的情况）
     const toolCall: ToolCallInfo = {
       id: `tool_${++toolCallCounter}`,
       name,
@@ -581,6 +638,46 @@ const handleToolCall = (name: string, args: Record<string, unknown>) => {
     
     msg.toolCalls.push(toolCall);
     scrollToBottom();
+  }
+};
+
+/** 处理工具被拒绝 */
+const handleToolRejected = (name: string) => {
+  console.log('Tool rejected:', name);
+  
+  if (index.value >= 0 && index.value < messages.value.length) {
+    const msg = messages.value[index.value] as AMessage;
+    if (msg.toolCalls) {
+      // 找到等待批准的工具并标记为已拒绝
+      const toolCall = msg.toolCalls.find(t => t.name === name && t.status === 'waiting_approval');
+      if (toolCall) {
+        toolCall.status = 'rejected';
+      }
+    }
+  }
+  
+  currentToolName.value = undefined;
+};
+
+/** 用户批准工具调用 */
+const onToolApprove = (toolCallId: string) => {
+  console.log('User approved tool:', toolCallId);
+  if (vscode !== undefined) {
+    vscode.postMessage({
+      command: 'xiaoke.webview.tool.approve',
+      payload: { toolCallId },
+    });
+  }
+};
+
+/** 用户拒绝工具调用 */
+const onToolReject = (toolCallId: string) => {
+  console.log('User rejected tool:', toolCallId);
+  if (vscode !== undefined) {
+    vscode.postMessage({
+      command: 'xiaoke.webview.tool.reject',
+      payload: { toolCallId },
+    });
   }
 };
 

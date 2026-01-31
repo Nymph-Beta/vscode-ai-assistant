@@ -20,6 +20,9 @@
           :args="tool.args"
           :result="tool.result"
           :status="tool.status"
+          :tool-call-id="tool.toolCallId"
+          @approve="handleToolApprove"
+          @reject="handleToolReject"
         />
       </div>
 
@@ -47,12 +50,15 @@ import ToolBlock from './components/ToolBlock.vue';
 import ReasoningBlock from './components/ReasoningBlock.vue';
 import type { ToolResult } from './components/ToolBlock.vue';
 
+export type ToolCallStatus = 'pending' | 'waiting_approval' | 'running' | 'success' | 'error' | 'rejected';
+
 export interface ToolCallInfo {
   id: string;
   name: string;
   args: Record<string, unknown>;
   result?: ToolResult;
-  status: 'pending' | 'running' | 'success' | 'error';
+  status: ToolCallStatus;
+  toolCallId?: string; // 后端的工具调用 ID，用于批准/拒绝
 }
 
 export type MessageStatus = 'thinking' | 'answering' | 'completed';
@@ -66,6 +72,19 @@ const props = defineProps<{
   status: MessageStatus;
   toolCalls?: ToolCallInfo[];
 }>();
+
+const emit = defineEmits<{
+  (e: 'toolApprove', toolCallId: string): void;
+  (e: 'toolReject', toolCallId: string): void;
+}>();
+
+const handleToolApprove = (toolCallId: string) => {
+  emit('toolApprove', toolCallId);
+};
+
+const handleToolReject = (toolCallId: string) => {
+  emit('toolReject', toolCallId);
+};
 
 const mdit = new markdownit({
   html: false,

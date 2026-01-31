@@ -7,6 +7,7 @@
         <i v-if="status === 'running'" class="codicon codicon-loading codicon-modifier-spin" />
         <i v-else-if="status === 'success'" class="codicon codicon-check" />
         <i v-else-if="status === 'error'" class="codicon codicon-error" />
+        <i v-else-if="status === 'waiting_approval'" class="codicon codicon-question" />
         <i v-else class="codicon codicon-clock" />
         {{ statusText }}
       </span>
@@ -18,6 +19,24 @@
         <div v-for="(value, key) in displayArgs" :key="key" class="tool-arg">
           <span class="arg-key">{{ key }}:</span>
           <span class="arg-value">{{ formatArgValue(value) }}</span>
+        </div>
+      </div>
+      
+      <!-- 等待批准时显示操作按钮 -->
+      <div v-if="status === 'waiting_approval'" class="tool-approval">
+        <div class="approval-hint">
+          <i class="codicon codicon-info" />
+          <span>此工具需要您的批准才能执行</span>
+        </div>
+        <div class="approval-actions">
+          <button class="approval-btn approve-btn" @click.stop="handleApprove">
+            <i class="codicon codicon-check" />
+            批准执行
+          </button>
+          <button class="approval-btn reject-btn" @click.stop="handleReject">
+            <i class="codicon codicon-close" />
+            拒绝
+          </button>
         </div>
       </div>
       
@@ -45,17 +64,39 @@ export interface ToolResult {
   error?: string;
 }
 
+export type ToolStatus = 'pending' | 'waiting_approval' | 'running' | 'success' | 'error' | 'rejected';
+
 const props = defineProps<{
   type: string;
   args: Record<string, unknown>;
   result?: ToolResult;
-  status: 'pending' | 'running' | 'success' | 'error';
+  status: ToolStatus;
+  toolCallId?: string;
+}>();
+
+const emit = defineEmits<{
+  (e: 'approve', toolCallId: string): void;
+  (e: 'reject', toolCallId: string): void;
 }>();
 
 const isExpanded = ref(true);
 
 const toggleExpand = () => {
   isExpanded.value = !isExpanded.value;
+};
+
+// 处理批准
+const handleApprove = () => {
+  if (props.toolCallId) {
+    emit('approve', props.toolCallId);
+  }
+};
+
+// 处理拒绝
+const handleReject = () => {
+  if (props.toolCallId) {
+    emit('reject', props.toolCallId);
+  }
 };
 
 // 工具图标映射
@@ -86,24 +127,30 @@ const title = computed(() => {
 // 状态相关
 const statusClass = computed(() => ({
   'status-pending': props.status === 'pending',
+  'status-waiting': props.status === 'waiting_approval',
   'status-running': props.status === 'running',
   'status-success': props.status === 'success',
   'status-error': props.status === 'error',
+  'status-rejected': props.status === 'rejected',
 }));
 
 const statusBadgeClass = computed(() => ({
   'badge-pending': props.status === 'pending',
+  'badge-waiting': props.status === 'waiting_approval',
   'badge-running': props.status === 'running',
   'badge-success': props.status === 'success',
   'badge-error': props.status === 'error',
+  'badge-rejected': props.status === 'rejected',
 }));
 
 const statusText = computed(() => {
   switch (props.status) {
     case 'pending': return '等待中';
+    case 'waiting_approval': return '等待批准';
     case 'running': return '执行中';
     case 'success': return '完成';
     case 'error': return '失败';
+    case 'rejected': return '已拒绝';
     default: return '';
   }
 });
@@ -216,6 +263,25 @@ const formatArgValue = (value: unknown): string => {
   color: var(--vscode-editor-background);
 }
 
+.badge-waiting {
+  background: var(--vscode-editorWarning-foreground);
+  color: var(--vscode-editor-background);
+}
+
+.badge-rejected {
+  background: var(--vscode-debugIcon-stopForeground);
+  color: var(--vscode-editor-background);
+}
+
+.tool-block.status-waiting {
+  border-color: var(--vscode-editorWarning-foreground);
+}
+
+.tool-block.status-rejected {
+  border-color: var(--vscode-debugIcon-stopForeground);
+  opacity: 0.7;
+}
+
 .expand-icon {
   transition: transform 0.15s ease;
 }
@@ -248,6 +314,67 @@ const formatArgValue = (value: unknown): string => {
 
 .tool-result {
   margin-top: 8px;
+}
+
+/* 批准操作区域 */
+.tool-approval {
+  margin: 8px 0;
+  padding: 12px;
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  border-radius: 4px;
+  border-left: 3px solid var(--vscode-editorWarning-foreground);
+}
+
+.approval-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--vscode-editorWarning-foreground);
+}
+
+.approval-hint .codicon {
+  font-size: 14px;
+}
+
+.approval-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.approval-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.approval-btn .codicon {
+  font-size: 12px;
+}
+
+.approve-btn {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.approve-btn:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.reject-btn {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+}
+
+.reject-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
 }
 
 /* Loading spin animation */
