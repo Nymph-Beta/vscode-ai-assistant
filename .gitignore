@@ -18,6 +18,10 @@ packages/extension/webview-ui/
 # Documentation (plans and internal docs)
 doc/
 plans/
+*.plan.md
+功能实现检查报告.md
+git-commit-guide.md
+git-commit.sh
 
 # OS files
 .DS_Store

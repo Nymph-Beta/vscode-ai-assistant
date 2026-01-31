@@ -14,6 +14,8 @@ export interface ListFilesInput extends ToolInput {
   recursive?: boolean;
   /** 最大深度（仅在 recursive 为 true 时有效） */
   max_depth?: number;
+  /** 最大条目数（防止输出过长） */
+  max_entries?: number;
 }
 
 interface FileEntry {
@@ -42,9 +44,16 @@ export class ListFilesTool extends BaseTool<ListFilesInput> {
         type: "number",
         description: "递归的最大深度，默认为 3。仅在 recursive 为 true 时有效",
       },
+      max_entries: {
+        type: "number",
+        description: "最大返回条目数，默认为 200。超过此数量会被截断，建议对大型项目使用较小值或分目录查看",
+      },
     },
     required: ["path"],
   };
+
+  // 默认最大条目数
+  private readonly defaultMaxEntries = 200;
 
   // 要忽略的目录和文件
   private readonly ignorePatterns = [
@@ -89,6 +98,7 @@ export class ListFilesTool extends BaseTool<ListFilesInput> {
 
       const recursive = input.recursive ?? false;
       const maxDepth = input.max_depth ?? 3;
+      const maxEntries = input.max_entries ?? this.defaultMaxEntries;
 
       // 收集文件列表
       const entries: FileEntry[] = [];
@@ -102,22 +112,39 @@ export class ListFilesTool extends BaseTool<ListFilesInput> {
         return a.relativePath.localeCompare(b.relativePath);
       });
 
+      const totalCount = entries.length;
+      const isTruncated = totalCount > maxEntries;
+      
+      // 如果超出限制，截断结果
+      const displayEntries = isTruncated ? entries.slice(0, maxEntries) : entries;
+
       // 格式化输出
-      const lines = entries.map((entry) => {
+      const lines = displayEntries.map((entry) => {
         const suffix = entry.type === "directory" ? "/" : "";
         return entry.relativePath + suffix;
       });
 
-      const header = `目录: ${input.path}\n` +
+      let header = `目录: ${input.path}\n` +
         `递归: ${recursive ? `是 (最大深度: ${maxDepth})` : "否"}\n` +
-        `共 ${entries.length} 项\n` +
-        `${"─".repeat(50)}\n`;
+        `共 ${totalCount} 项`;
+      
+      if (isTruncated) {
+        header += ` (显示前 ${maxEntries} 项，省略 ${totalCount - maxEntries} 项)`;
+      }
+      header += `\n${"─".repeat(50)}\n`;
 
       if (entries.length === 0) {
         return this.success(`${header}(空目录)`);
       }
 
-      return this.success(`${header}${lines.join("\n")}`);
+      let result = `${header}${lines.join("\n")}`;
+      
+      // 如果被截断，添加提示
+      if (isTruncated) {
+        result += `\n\n[注意: 结果已截断。如需查看完整列表，请分目录查询或增加 max_entries 参数]`;
+      }
+
+      return this.success(result);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       return this.failure(`列出目录失败: ${errorMessage}`);

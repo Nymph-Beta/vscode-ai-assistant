@@ -190,50 +190,48 @@ export class ContextCollector {
 
   /**
    * 将上下文格式化为文本，用于添加到系统提示
+   * 
+   * 注意：这里输出的内容会被 ModeManager 包装在"环境详情"部分中，
+   * 并明确标注为"自动生成的信息，不是用户请求的一部分"
    */
   formatContextForPrompt(context: FullContext): string {
     const parts: string[] = [];
 
-    // 工作区信息
+    // 工作区信息（简洁版）
     if (context.workspace) {
       parts.push(`工作区: ${context.workspace.name}`);
-      if (context.workspace.openFiles.length > 0) {
-        parts.push(`打开的文件: ${context.workspace.openFiles.slice(0, 5).join(", ")}${context.workspace.openFiles.length > 5 ? "..." : ""}`);
-      }
+      parts.push(`工作区路径: ${context.workspace.rootPath}`);
     }
 
-    // 当前文件信息
+    // 当前活动文件信息（仅基本信息，不包含内容）
     if (context.activeFile) {
-      parts.push(`\n当前文件: ${context.activeFile.path} (${context.activeFile.language})`);
-
-      if (context.activeFile.cursorPosition) {
-        parts.push(`光标位置: 第 ${context.activeFile.cursorPosition.line} 行, 第 ${context.activeFile.cursorPosition.column} 列`);
-      }
-
-      if (context.activeFile.selection) {
-        parts.push(`\n选中内容 (第 ${context.activeFile.selectionRange?.startLine}-${context.activeFile.selectionRange?.endLine} 行):`);
+      parts.push(`当前打开的文件: ${context.activeFile.path}`);
+      
+      // 只有当用户明确选中了文本时才显示（通常意味着用户想对选中内容进行操作）
+      if (context.activeFile.selection && context.activeFile.selection.length < 500) {
+        parts.push(`\n用户选中的文本 (第 ${context.activeFile.selectionRange?.startLine}-${context.activeFile.selectionRange?.endLine} 行):`);
         parts.push(`\`\`\`${context.activeFile.language}`);
         parts.push(context.activeFile.selection);
         parts.push("```");
       }
 
+      // 文件内容（仅当明确请求时）
       if (context.activeFile.content) {
         parts.push(`\n文件内容:\n\`\`\`${context.activeFile.language}`);
-        // parts.push("```" + context.activeFile.language);
         parts.push(context.activeFile.content);
         parts.push("```");
       }
     }
 
-    // 诊断信息
+    // 诊断信息（错误和警告，可能对调试有用）
     if (context.diagnostics && context.diagnostics.length > 0) {
-      parts.push("\n当前文件的问题:");
-      for (const diag of context.diagnostics.slice(0, 10)) {
+      parts.push("\n当前文件的诊断问题:");
+      for (const diag of context.diagnostics.slice(0, 5)) {
         const icon = diag.severity === "error" ? "❌" : diag.severity === "warning" ? "⚠️" : "ℹ️";
-        parts.push(`${icon} 第 ${diag.line} 行: ${diag.message}${diag.source ? ` (${diag.source})` : ""}`);
+        parts.push(`${icon} 第 ${diag.line} 行: ${diag.message}`);
       }
-      if (context.diagnostics.length > 10) {
-        parts.push(`... 还有 ${context.diagnostics.length - 10} 个问题`);
+      if (context.diagnostics.length > 5) {
+        parts.push(`... 还有 ${context.diagnostics.length - 5} 个问题`);
       }
     }
 

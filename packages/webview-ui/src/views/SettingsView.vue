@@ -132,6 +132,64 @@
         </div>
       </section>
 
+      <!-- 自动批准设置 -->
+      <section class="settings-section">
+        <h3 class="section-title">
+          <i class="codicon codicon-shield" />
+          自动批准
+        </h3>
+
+        <div class="setting-item toggle">
+          <label class="setting-label">启用自动批准</label>
+          <label class="toggle-switch">
+            <input type="checkbox" v-model="settings.autoApprovalEnabled" />
+            <span class="toggle-slider" />
+          </label>
+        </div>
+
+        <div v-if="settings.autoApprovalEnabled" class="auto-approval-options">
+          <div class="setting-item toggle">
+            <label class="setting-label">自动批准只读工具</label>
+            <label class="toggle-switch">
+              <input type="checkbox" v-model="settings.alwaysAllowReadOnly" />
+              <span class="toggle-slider" />
+            </label>
+          </div>
+          <span class="setting-hint">read_file, list_files, search_files, codebase_search</span>
+
+          <div class="setting-item toggle">
+            <label class="setting-label">自动批准写入工具</label>
+            <label class="toggle-switch">
+              <input type="checkbox" v-model="settings.alwaysAllowWrite" />
+              <span class="toggle-slider" />
+            </label>
+          </div>
+          <span class="setting-hint">write_to_file, edit_file, apply_diff</span>
+
+          <div class="setting-item toggle">
+            <label class="setting-label">自动批准命令执行</label>
+            <label class="toggle-switch">
+              <input type="checkbox" v-model="settings.alwaysAllowExecute" />
+              <span class="toggle-slider" />
+            </label>
+          </div>
+          <span class="setting-hint">execute_command（需配合允许/拒绝命令列表）</span>
+        </div>
+
+        <div class="setting-item">
+          <label class="setting-label">超时自动批准 (毫秒)</label>
+          <input 
+            type="number" 
+            v-model.number="settings.autoApproveTimeoutMs" 
+            class="setting-input"
+            min="0"
+            max="60000"
+            step="1000"
+          />
+          <span class="setting-hint">0 表示禁用。在此时间后无操作将自动批准工具调用</span>
+        </div>
+      </section>
+
       <!-- 界面设置 -->
       <section class="settings-section">
         <h3 class="section-title">
@@ -176,6 +234,12 @@ export interface Settings {
   codeIndexEnabled: boolean;
   embeddingProvider: string;
   embeddingModel: string;
+  // Auto Approval
+  autoApprovalEnabled: boolean;
+  alwaysAllowReadOnly: boolean;
+  alwaysAllowWrite: boolean;
+  alwaysAllowExecute: boolean;
+  autoApproveTimeoutMs: number;
   // UI
   showTokenUsage: boolean;
   showCostEstimate: boolean;
@@ -207,6 +271,11 @@ const settings = ref<Settings>({
   codeIndexEnabled: false,
   embeddingProvider: 'openai',
   embeddingModel: 'text-embedding-3-small',
+  autoApprovalEnabled: false,
+  alwaysAllowReadOnly: true,
+  alwaysAllowWrite: false,
+  alwaysAllowExecute: false,
+  autoApproveTimeoutMs: 0,
   showTokenUsage: true,
   showCostEstimate: true,
 });
@@ -417,5 +486,16 @@ function saveSettings() {
 .toggle-switch input:checked + .toggle-slider:before {
   transform: translateX(20px);
   background-color: var(--vscode-button-foreground);
+}
+
+/* Auto approval options */
+.auto-approval-options {
+  margin-left: 12px;
+  padding-left: 12px;
+  border-left: 2px solid var(--vscode-input-border);
+}
+
+.auto-approval-options .setting-hint {
+  margin-bottom: 12px;
 }
 </style>

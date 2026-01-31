@@ -27,6 +27,9 @@
         <div class="approval-hint">
           <i class="codicon codicon-info" />
           <span>此工具需要您的批准才能执行</span>
+          <span v-if="timeoutRemaining > 0" class="timeout-countdown">
+            （{{ timeoutRemaining }}s 后自动批准）
+          </span>
         </div>
         <div class="approval-actions">
           <button class="approval-btn approve-btn" @click.stop="handleApprove">
@@ -55,7 +58,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch, onUnmounted } from 'vue';
 import CodeAccordion from './CodeAccordion.vue';
 
 export interface ToolResult {
@@ -72,6 +75,7 @@ const props = defineProps<{
   result?: ToolResult;
   status: ToolStatus;
   toolCallId?: string;
+  timeoutMs?: number; // 超时自动批准时间（毫秒）
 }>();
 
 const emit = defineEmits<{
@@ -81,12 +85,56 @@ const emit = defineEmits<{
 
 const isExpanded = ref(true);
 
+// 倒计时相关
+const timeoutRemaining = ref(0);
+let countdownInterval: ReturnType<typeof setInterval> | null = null;
+
+// 启动倒计时
+const startCountdown = (ms: number) => {
+  stopCountdown();
+  timeoutRemaining.value = Math.ceil(ms / 1000);
+  countdownInterval = setInterval(() => {
+    timeoutRemaining.value--;
+    if (timeoutRemaining.value <= 0) {
+      stopCountdown();
+    }
+  }, 1000);
+};
+
+// 停止倒计时
+const stopCountdown = () => {
+  if (countdownInterval) {
+    clearInterval(countdownInterval);
+    countdownInterval = null;
+  }
+  timeoutRemaining.value = 0;
+};
+
+// 监听状态变化和超时设置
+watch(
+  () => [props.status, props.timeoutMs] as const,
+  ([status, timeoutMs]) => {
+    if (status === 'waiting_approval' && timeoutMs && timeoutMs > 0) {
+      startCountdown(timeoutMs);
+    } else {
+      stopCountdown();
+    }
+  },
+  { immediate: true }
+);
+
+// 组件卸载时清理
+onUnmounted(() => {
+  stopCountdown();
+});
+
 const toggleExpand = () => {
   isExpanded.value = !isExpanded.value;
 };
 
 // 处理批准
 const handleApprove = () => {
+  stopCountdown();
   if (props.toolCallId) {
     emit('approve', props.toolCallId);
   }
@@ -94,6 +142,7 @@ const handleApprove = () => {
 
 // 处理拒绝
 const handleReject = () => {
+  stopCountdown();
   if (props.toolCallId) {
     emit('reject', props.toolCallId);
   }
@@ -336,6 +385,12 @@ const formatArgValue = (value: unknown): string => {
 
 .approval-hint .codicon {
   font-size: 14px;
+}
+
+.timeout-countdown {
+  margin-left: 4px;
+  font-weight: 600;
+  color: var(--vscode-charts-orange);
 }
 
 .approval-actions {

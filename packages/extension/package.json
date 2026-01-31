@@ -181,21 +181,50 @@
         }
       },
       {
-        "title": "工具设置",
+        "title": "自动批准设置",
         "properties": {
-          "vscode-tools.tools.requireApproval": {
+          "vscode-tools.autoApproval.enabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "启用自动批准功能（启用后，符合条件的工具将自动执行）"
+          },
+          "vscode-tools.autoApproval.alwaysAllowReadOnly": {
             "type": "boolean",
             "default": true,
-            "description": "工具调用前是否需要用户批准"
+            "description": "自动批准只读工具（read_file, list_files, search_files, codebase_search）"
           },
-          "vscode-tools.tools.autoApprove": {
+          "vscode-tools.autoApproval.alwaysAllowWrite": {
+            "type": "boolean",
+            "default": false,
+            "description": "自动批准写入工具（write_to_file, edit_file, apply_diff）"
+          },
+          "vscode-tools.autoApproval.alwaysAllowExecute": {
+            "type": "boolean",
+            "default": false,
+            "description": "自动批准命令执行（需配合 allowedCommands/deniedCommands）"
+          },
+          "vscode-tools.autoApproval.allowedCommands": {
             "type": "array",
-            "default": [],
+            "default": ["npm ", "pnpm ", "yarn ", "git status", "git diff", "git log", "ls ", "cat ", "echo "],
             "items": {
-              "type": "string",
-              "enum": ["read_file", "list_files", "search_files", "execute_command", "write_to_file", "edit_file", "apply_diff", "checkpoint", "codebase_search"]
+              "type": "string"
             },
-            "description": "自动批准的工具列表（这些工具将跳过用户确认）"
+            "description": "允许自动执行的命令前缀列表"
+          },
+          "vscode-tools.autoApproval.deniedCommands": {
+            "type": "array",
+            "default": ["rm -rf", "sudo", "rm -r /", "mkfs", "dd if=", "chmod 777", "> /dev/"],
+            "items": {
+              "type": "string"
+            },
+            "description": "禁止执行的危险命令（会被自动拒绝）"
+          },
+          "vscode-tools.autoApproval.timeoutMs": {
+            "type": "number",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 60000,
+            "description": "超时自动批准时间（毫秒），0 表示禁用。用户在此时间内无操作将自动批准"
           }
         }
       }

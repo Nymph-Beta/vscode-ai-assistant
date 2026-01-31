@@ -21,6 +21,7 @@
           :result="tool.result"
           :status="tool.status"
           :tool-call-id="tool.toolCallId"
+          :timeout-ms="tool.timeoutMs"
           @approve="handleToolApprove"
           @reject="handleToolReject"
         />
@@ -59,6 +60,7 @@ export interface ToolCallInfo {
   result?: ToolResult;
   status: ToolCallStatus;
   toolCallId?: string; // 后端的工具调用 ID，用于批准/拒绝
+  timeoutMs?: number;  // 超时自动批准时间（毫秒）
 }
 
 export type MessageStatus = 'thinking' | 'answering' | 'completed';

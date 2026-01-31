@@ -42,7 +42,7 @@
     <!-- 主内容区域 -->
     <main class="main-wrapper">
       <!-- 聊天视图 -->
-      <div v-show="currentView === 'chat'" ref="mainContainer" class="main-container">
+      <div v-show="currentView === 'chat'" ref="mainContainer" class="main-container" @scroll="handleScroll">
       <div v-if="messages.length === 0" class="empty-state">
         <i class="codicon codicon-comment-discussion empty-icon" />
         <p class="empty-title">开始对话</p>
@@ -240,12 +240,17 @@ type VscodeToolResult = {
 
 type VscodeToolApprovalRequest = {
   command: 'xiaoke.webview.tool.approval_request';
-  payload: { toolCallId: string; toolName: string; args: Record<string, unknown> };
+  payload: { toolCallId: string; toolName: string; args: Record<string, unknown>; timeoutMs?: number };
 };
 
 type VscodeToolRejected = {
   command: 'xiaoke.webview.tool.rejected';
   payload: { name: string; args: Record<string, unknown> };
+};
+
+type VscodeToolTimeoutApproved = {
+  command: 'xiaoke.webview.tool.timeout_approved';
+  payload: { toolCallId: string };
 };
 
 type VscodeHistoryClear = {
@@ -286,6 +291,7 @@ type VscodeMessage =
   | VscodeToolResult
   | VscodeToolApprovalRequest
   | VscodeToolRejected
+  | VscodeToolTimeoutApproved
   | VscodeHistoryClear
   | VscodeHistoryRestore
   | VscodeTokenUsage
@@ -430,12 +436,17 @@ const vscodeListener = async (event: MessageEvent<VscodeMessage>) => {
     }
     case 'xiaoke.webview.tool.approval_request': {
       const approvalPayload = payload as VscodeToolApprovalRequest['payload'];
-      handleToolApprovalRequest(approvalPayload.toolCallId, approvalPayload.toolName, approvalPayload.args);
+      handleToolApprovalRequest(approvalPayload.toolCallId, approvalPayload.toolName, approvalPayload.args, approvalPayload.timeoutMs);
       break;
     }
     case 'xiaoke.webview.tool.rejected': {
       const rejectedPayload = payload as VscodeToolRejected['payload'];
       handleToolRejected(rejectedPayload.name);
+      break;
+    }
+    case 'xiaoke.webview.tool.timeout_approved': {
+      const timeoutPayload = payload as VscodeToolTimeoutApproved['payload'];
+      handleToolTimeoutApproved(timeoutPayload.toolCallId);
       break;
     }
     case 'xiaoke.webview.token.usage': {
@@ -512,7 +523,7 @@ const handleChatOpen = async () => {
   }) - 1;
   
   console.log('[WebView] 新消息已创建, index:', index.value, 'messages 长度:', messages.value.length);
-  scrollToBottom();
+  forceScrollToBottom(); // 新消息开始时强制滚动到底部
 };
 
 /** 处理文本消息（增量） */
@@ -587,8 +598,8 @@ const handleChatError = (err: unknown) => {
 // ============ 工具调用处理 ============
 
 /** 处理工具批准请求（工具等待用户批准） */
-const handleToolApprovalRequest = (toolCallId: string, toolName: string, args: Record<string, unknown>) => {
-  console.log('Tool approval request:', toolCallId, toolName, args);
+const handleToolApprovalRequest = (toolCallId: string, toolName: string, args: Record<string, unknown>, timeoutMs?: number) => {
+  console.log('Tool approval request:', toolCallId, toolName, args, 'timeout:', timeoutMs);
   currentToolName.value = toolName;
   
   if (index.value >= 0 && index.value < messages.value.length) {
@@ -603,10 +614,28 @@ const handleToolApprovalRequest = (toolCallId: string, toolName: string, args: R
       args,
       status: 'waiting_approval',
       toolCallId, // 保存后端的工具调用 ID
+      timeoutMs,  // 超时自动批准时间
     };
     
     msg.toolCalls.push(toolCall);
     scrollToBottom();
+  }
+};
+
+/** 处理工具超时自动批准 */
+const handleToolTimeoutApproved = (toolCallId: string) => {
+  console.log('Tool timeout approved:', toolCallId);
+  
+  if (index.value >= 0 && index.value < messages.value.length) {
+    const msg = messages.value[index.value] as AMessage;
+    if (msg.toolCalls) {
+      // 找到对应的工具调用并更新状态
+      const toolCall = msg.toolCalls.find(t => t.toolCallId === toolCallId);
+      if (toolCall) {
+        toolCall.status = 'running';
+        toolCall.timeoutMs = undefined; // 清除超时
+      }
+    }
   }
 };
 
@@ -725,7 +754,7 @@ async function send(content: string) {
   }
 
   messages.value.push({ role: 'user', content: content.trim() });
-  scrollToBottom();
+  forceScrollToBottom(); // 用户发送消息时强制滚动到底部
 
   if (vscode !== undefined) {
     vscode.postMessage({ command: 'xiaoke.webview.chat.invoke', payload: content });
@@ -782,7 +811,7 @@ function handleHistoryRestore(historyMessages: Array<{ role: string; content: st
   }
   
   console.log(`[历史恢复] 已恢复 ${messages.value.length} 条 UI 消息`);
-  scrollToBottom();
+  forceScrollToBottom(); // 恢复历史后强制滚动到底部
 }
 
 function onModeChange(slug: string) {
@@ -860,13 +889,39 @@ function handleTokenUsage(usage: { inputTokens?: number; outputTokens?: number; 
 
 const mainContainer = useTemplateRef('mainContainer');
 
-const scrollToBottom = () => {
+// 用户是否在底部附近（用于智能滚动）
+const isNearBottom = ref(true);
+const scrollThreshold = 100; // 距离底部多少像素内算"在底部"
+
+// 监听滚动事件，判断用户是否在底部
+const handleScroll = () => {
+  const container = mainContainer.value;
+  if (!container) return;
+  
+  const { scrollTop, scrollHeight, clientHeight } = container;
+  // 如果距离底部小于阈值，认为用户在底部
+  isNearBottom.value = scrollHeight - scrollTop - clientHeight < scrollThreshold;
+};
+
+// 智能滚动：只有用户在底部时才自动滚动
+const scrollToBottom = (force = false) => {
+  // 如果用户不在底部且不是强制滚动，则不滚动
+  if (!isNearBottom.value && !force) {
+    return;
+  }
+  
   nextTick(() => {
     mainContainer.value?.scrollTo({
       top: mainContainer.value.scrollHeight,
       behavior: 'smooth',
     });
   });
+};
+
+// 强制滚动到底部（用于用户发送消息等场景）
+const forceScrollToBottom = () => {
+  isNearBottom.value = true;
+  scrollToBottom(true);
 };
 </script>
 
